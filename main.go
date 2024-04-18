@@ -2,64 +2,73 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
+	"time"
 )
 
-var count int
-var countFile int
-var mutex sync.Mutex
-
-func countHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-		return
-	}
-
-	mutex.Lock()
-	count++
-	currentCount := count
-	mutex.Unlock()
-
-	fmt.Fprintf(w, "Count: %d\n", currentCount)
+// AppState holds the shared state of the application.
+type AppState struct {
+	count int
+	mu    sync.Mutex // Protects the count variable
 }
 
-func storeCountHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-		return
-	}
+// Increment the count safely.
+func (app *AppState) incrementCount() int {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	app.count++
+	return app.count
+}
 
-	mutex.Lock()
-	countFile++
-	fileName := fmt.Sprintf("count_%d.txt", countFile)
-	f, err := os.Create(fileName)
-	if err != nil {
-		fmt.Println(err)
-	}
-	l, err := f.WriteString(fmt.Sprintf("Count: %d\n", count))
-	if err != nil {
-		fmt.Println(err)
-		f.Close()
-	}
-	fmt.Println(l, "bytes written successfully")
-	err = f.Close()
-	if err != nil {
-		fmt.Println(err)
-	}
-	mutex.Unlock()
+// Safe retrieval of the count value.
+func (app *AppState) getCount() int {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	return app.count
+}
 
-	fmt.Fprintf(w, "Store count file to %s\n", fileName)
+// HTTP handler to increment the count.
+func countHandler(app *AppState) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		updatedCount := app.incrementCount()
+		fmt.Fprintf(w, "Count updated: %d\n", updatedCount)
+	}
 }
 
 func main() {
-	http.HandleFunc("/count", countHandler)
-	http.HandleFunc("/storecount", storeCountHandler)
+	appState := &AppState{}
 
-	// Start the server on port 8080
-	println("Starting server at port 1535")
-	if err := http.ListenAndServe(":1535", nil); err != nil {
-		panic(err)
-	}
+	// Start a background goroutine to write the count to a file every second.
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		// Open file in append mode.
+		f, err := os.OpenFile("count-writing.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			log.Fatalf("Error opening file: %v", err)
+		}
+		defer f.Close()
+
+		for range ticker.C {
+			currentCount := appState.getCount()
+
+			// Write the current count to the file with a newline for each entry.
+			_, err := f.WriteString(strconv.Itoa(currentCount) + "\n")
+			log.Printf("Count written to file: %d\n", currentCount)
+			if err != nil {
+				log.Printf("Error writing to file: %v", err)
+			}
+			f.Sync() // Ensure that the write is flushed to the disk.
+		}
+	}()
+
+	// Set up HTTP server
+	http.HandleFunc("/count", countHandler(appState))
+	log.Println("Server started on :1535")
+	log.Fatal(http.ListenAndServe(":1535", nil))
 }
