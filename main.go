@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -44,7 +43,7 @@ func main() {
 
 	// Start a background goroutine to write the count to a file every second.
 	go func() {
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
 		// Open file in append mode.
@@ -58,7 +57,8 @@ func main() {
 			currentCount := appState.getCount()
 
 			// Write the current count to the file with a newline for each entry.
-			_, err := f.WriteString(strconv.Itoa(currentCount) + "\n")
+			// write the timestamp and the count to the file.
+			_, err := f.WriteString(fmt.Sprintf("%s: %d\n", time.Now().Format(time.RFC3339), currentCount))
 			log.Printf("Count written to file: %d\n", currentCount)
 			if err != nil {
 				log.Printf("Error writing to file: %v", err)
